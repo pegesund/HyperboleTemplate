@@ -75,6 +75,8 @@ executable myapp
                       , http-types
                       , wai
                       , time
+                      , hasql == 1.9.1.2
+                      , bytestring
 
     -- Directories containing source files.
     hs-source-dirs:   app

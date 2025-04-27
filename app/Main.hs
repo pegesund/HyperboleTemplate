@@ -7,6 +7,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE TypeApplications #-}
 
 
 
@@ -15,19 +16,65 @@ module Main where
 import Data.Text (Text)
 import Web.Hyperbole
 import Effectful
-import Logger (logInfo, logInfoM)
-import Control.Monad.IO.Class (liftIO)
+import Effectful.Reader.Static
+import Logger (logInfo)
+import Hasql.Connection (Connection)
+import qualified Hasql.Connection as Connection
+import qualified Hasql.Session as Session
+import qualified Hasql.Statement as HS
+import qualified Hasql.Encoders as HE
+import qualified Hasql.Decoders as HD
+
+-- Effect for database access
+type DB = Reader Connection
 
 main :: IO ()
 main = do
   -- Log application startup
   logInfo "Starting Hyperbole application on port 3000"
   
-  run 3000 $ do
-    liveApp (basicDocument "Example") (runPage mypage)
+  -- Connect to PostgreSQL database
+  -- Empty list for default settings (localhost)
+  connResult <- Connection.acquire []
+  
+  case connResult of
+    Left err -> do
+      logInfo $ "Database connection error: " ++ show err
+      error "Failed to connect to the database"
+    Right conn -> do
+      logInfo "Successfully connected to PostgreSQL database"
+      
+      -- Setup database table if needed
+      setupDbResult <- Session.run setupDbSession conn
+      case setupDbResult of
+        Left err -> logInfo $ "Database setup error: " ++ show err
+        Right _ -> logInfo "Database ready"
+      
+      -- Run application with database connection
+      run 3000 $ do
+        liveApp (basicDocument "Example") 
+          (runReader conn $ runPage mypage)
 
 
-mypage :: (Hyperbole :> es) => Eff es (Page '[Message])
+-- Setup database tables
+setupDbSession :: Session.Session ()
+setupDbSession = Session.sql $ 
+  "CREATE TABLE IF NOT EXISTS messages (id SERIAL PRIMARY KEY, content TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+
+-- Save message to database
+storeMessageSession :: Text -> Session.Session ()
+storeMessageSession msg = Session.statement msg storeMessageStatement 
+
+-- SQL statement for storing messages
+storeMessageStatement :: HS.Statement Text ()
+storeMessageStatement = HS.Statement sqlQuery encoder decoder True
+  where
+    sqlQuery = "INSERT INTO messages (content) VALUES ($1)"
+    encoder = HE.param (HE.nonNullable HE.text)
+    decoder = HD.noResult
+
+-- Page with database access
+mypage :: (Hyperbole :> es, DB :> es) => Eff es (Page '[Message])
 mypage = do
   pure $ col id $ do
     hyper Message1 $ messageView "Hello"
@@ -38,7 +85,7 @@ data Message = Message1 | Message2
   deriving (Show, Read, ViewId)
 
 
-instance (IOE :> es) => HyperView Message es where
+instance (IOE :> es, DB :> es) => HyperView Message es where
   data Action Message = Louder Text
     deriving (Show, Read, ViewAction)
 
@@ -46,6 +93,19 @@ instance (IOE :> es) => HyperView Message es where
     -- Log when the action is executed
     liftIO $ logInfo $ "Making text louder: " ++ show msg
     
+    -- Get database connection from Reader effect
+    conn <- ask @Connection
+    
+    -- Store message in database
+    let logMsg = "Stored in DB: " <> msg
+    dbResult <- liftIO $ Session.run (storeMessageSession logMsg) conn
+    
+    -- Log database result
+    case dbResult of
+      Left err -> liftIO $ logInfo $ "DB Error: " ++ show err
+      Right _ -> liftIO $ logInfo "Successfully stored message in database"
+    
+    -- Return updated view with louder text
     let new = msg <> "!"
     pure $ messageView new
 
