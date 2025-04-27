@@ -1,0 +1,37 @@
+# Haskell build artifacts
+dist/
+dist-newstyle/
+.stack-work/
+cabal.project.local
+
+# Hyperbole package (external dependency)
+hyperbole-0.4.3/
+
+# Binaries
+*.o
+*.hi
+*.chi
+*.chs.h
+*.dyn_o
+*.dyn_hi
+*.prof
+*.aux
+*.hp
+*.eventlog
+
+# IDE and editor files
+.ghc.environment.*
+.hie/
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
