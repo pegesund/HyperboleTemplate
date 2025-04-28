@@ -77,7 +77,9 @@ executable myapp
                       , time
                       , hasql == 1.9.1.2
                       , hasql-pool
+                      , hasql-th == 0.4.0.23
                       , bytestring
+                      , vector
 
     -- Directories containing source files.
     hs-source-dirs:   app
