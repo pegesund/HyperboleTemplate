@@ -16,6 +16,7 @@ module Config
   , getDbUser
   , getDbPassword
   , getPoolSize
+  , getLogLevel
   , withPoolConfig
   ) where
 
@@ -23,7 +24,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Effectful
 import Effectful.Reader.Static
-import Logger (logInfo)
+import qualified System.Log.Logger as Log
 import Control.Exception (bracket)
 import Data.ByteString (ByteString)
 import qualified Data.ByteString.Char8 as BS
@@ -41,6 +42,7 @@ data AppConfig = AppConfig
   , configAcquisitionTimeout :: !Int  -- seconds
   , configMaxLifetime       :: !Int   -- seconds
   , configMaxIdletime       :: !Int   -- seconds
+  , configLogLevel          :: !Text  -- DEBUG, INFO, WARNING, ERROR, CRITICAL
   } deriving (Show, Generic)
 
 -- Default configuration
@@ -56,6 +58,7 @@ defaultConfig = AppConfig
   , configAcquisitionTimeout = 10
   , configMaxLifetime = 600
   , configMaxIdletime = 600
+  , configLogLevel = "INFO"   -- Default to INFO level
   }
 
 -- Effect type for accessing configuration
@@ -64,10 +67,10 @@ type ConfigEnv = Reader AppConfig
 -- Helper to initialize and clean up config resources
 withConfig :: AppConfig -> (AppConfig -> IO a) -> IO a
 withConfig config action = do
-  logInfo $ "Initializing application with config: " ++ T.unpack (configAppName config)
+  Log.infoM "Config" $ "Initializing application with config: " ++ T.unpack (configAppName config)
   bracket 
     (pure config) 
-    (\_ -> logInfo "Config resources cleaned up") 
+    (\_ -> Log.infoM "Config" "Config resources cleaned up") 
     action
 
 -- Get the complete config from the reader monad
@@ -92,6 +95,9 @@ getDbPassword = configDbPassword <$> ask
 
 getPoolSize :: (ConfigEnv :> es) => Eff es Int
 getPoolSize = configPoolSize <$> ask
+
+getLogLevel :: (ConfigEnv :> es) => Eff es Text
+getLogLevel = configLogLevel <$> ask
 
 -- Helper function to construct a connection string from config
 buildConnectionString :: AppConfig -> ByteString

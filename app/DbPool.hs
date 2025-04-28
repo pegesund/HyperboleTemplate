@@ -33,7 +33,8 @@ import qualified Hasql.Statement as HS
 import Hasql.Decoders()
 import Hasql.Encoders()
 import Hasql.TH (resultlessStatement, vectorStatement)
-import Logger (logInfo)
+import qualified System.Log.Logger as Log
+import Logger (LogEnv, logInfo, logDebug)
 import Control.Exception (bracket)
 import Config
   ( ConfigEnv
@@ -59,21 +60,21 @@ initPoolSettings connStr size acqTimeout lifetime idletime = Config.settings
 -- Initialize the connection pool using config parameters
 initPoolWithConfig :: ByteString -> Int -> Int -> Int -> Int -> IO Pool.Pool
 initPoolWithConfig connStr size acqTimeout lifetime idletime = do
-  logInfo $ "Creating database connection pool (size: " ++ show size ++ 
+  Log.infoM "DbPool" $ "Creating database connection pool (size: " ++ show size ++ 
            ", acquisition timeout: " ++ show acqTimeout ++ "s" ++
            ", max lifetime: " ++ show lifetime ++ "s" ++
            ", max idle time: " ++ show idletime ++ "s)"
            
   pool <- Pool.acquire (initPoolSettings connStr size acqTimeout lifetime idletime)
-  logInfo "Connection pool created successfully"
+  Log.infoM "DbPool" "Connection pool created successfully"
   
   -- Setup database table if needed
   setupDbResult <- Pool.use pool setupDbSession
   case setupDbResult of
     Left err -> do
-      logInfo $ "Database setup error: " ++ show err
-      logInfo "Continuing without database setup"
-    Right _ -> logInfo "Database ready"
+      Log.errorM "DbPool" $ "Database setup error: " ++ show err
+      Log.warningM "DbPool" "Continuing without database setup"
+    Right _ -> Log.infoM "DbPool" "Database ready"
   
   pure pool
 
@@ -93,20 +94,22 @@ withPool :: (Pool.Pool -> IO a) -> IO a
 withPool = bracket 
   initPool
   (\pool -> do
-    logInfo "Shutting down connection pool"
+    Log.infoM "DbPool" "Shutting down connection pool"
     Pool.release pool
-    logInfo "Connection pool shutdown complete")
+    Log.infoM "DbPool" "Connection pool shutdown complete")
 
 -- Run a function with a database connection pool created from config
-withConfiguredPool :: (ConfigEnv :> es, IOE :> es) => (Pool.Pool -> Eff es a) -> Eff es a
+withConfiguredPool :: (ConfigEnv :> es, LogEnv :> es, IOE :> es) => (Pool.Pool -> Eff es a) -> Eff es a
 withConfiguredPool action = do
+  logDebug "Setting up connection pool from config"
   withPoolConfig $ \connStr size acqTimeout lifetime idletime -> do
     pool <- liftIO $ initPoolWithConfig connStr size acqTimeout lifetime idletime
+    logInfo "Connection pool created, executing action"
     result <- action pool
     liftIO $ do
-      logInfo "Shutting down connection pool"
+      Log.infoM "DbPool" "Shutting down connection pool"
       Pool.release pool
-      logInfo "Connection pool shutdown complete"
+      Log.infoM "DbPool" "Connection pool shutdown complete"
     pure result
 
 -- Setup database tables
