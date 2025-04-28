@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
@@ -26,7 +27,16 @@ import DbPool (
   DB,
   getRecentMessagesSession,
   storeMessageSession,
-  withPool,
+  withConfiguredPool,
+ )
+
+-- Import our configuration module
+import Config (
+  AppConfig(..),
+  ConfigEnv,
+  defaultConfig, 
+  withConfig,
+  welcomeMessage,
  )
 
 main :: IO ()
@@ -34,20 +44,41 @@ main = do
   -- Log application startup
   logInfo "Starting Hyperbole application on port 3000"
 
-  -- Create and use a connection pool with proper resource management
-  withPool $ \pool -> do
-    -- Run application with database connection pool
-    logInfo "Starting application server on port 3000"
-    run 3000 $ do
-      liveApp
-        (basicDocument "Example with Connection Pool")
-        (runReader pool $ runPage mypage)
+  -- Create a configuration with default values
+  let config = defaultConfig {
+        configAppName = "Hyperbole Demo App",
+        configWelcomeMessage = "Welcome to our amazing app!"
+      }
+
+  -- Use the configuration with proper resource management
+  withConfig config $ \appConfig -> do
+    -- Run the effectful application code with the config in a reader
+    runEff $ runReader appConfig $ do
+      welcome <- welcomeMessage
+      liftIO $ logInfo $ "Welcome message: " ++ Text.unpack welcome
+      
+      -- Create and use a connection pool with proper resource management using config
+      withConfiguredPool $ \pool -> do
+        -- Run application with database connection pool
+        liftIO $ logInfo "Starting application server on port 3000"
+        
+        -- Get the app config for passing to the page
+        appConf <- ask
+        
+        -- Run the web server with both configs (app config and DB pool)
+        liftIO $ run 3000 $ do
+          liveApp
+            (basicDocument $ configAppName appConf)
+            (runReader appConf $ runReader pool $ runPage mypage)
 
 -- Page with database access
-mypage :: (Hyperbole :> es, DB :> es, IOE :> es) => Eff es (Page '[Message, RecentMessages])
+mypage :: (Hyperbole :> es, DB :> es, ConfigEnv :> es, IOE :> es) => Eff es (Page '[Message, RecentMessages])
 mypage = do
+  -- Get configuration from Reader effect
+  welcome <- welcomeMessage
+
   -- Get database pool from Reader effect
-  pool <- ask
+  pool <- ask @Pool.Pool
 
   -- Get recent messages from database
   messagesResult <- liftIO $ Pool.use pool getRecentMessagesSession
@@ -59,6 +90,10 @@ mypage = do
 
   -- Create page with message input and recent messages display
   pure $ col id $ do
+    -- Display the welcome message from config
+    row id $ do
+      el_ $ text welcome
+    
     hyper Message1 $ messageView "Hello"
     hyper Message2 $ messageView "World!"
     hyper RecentMessages messagesView
@@ -97,16 +132,19 @@ messagesErrorView errorMsg = do
   row id $ do
     el_ $ text $ Text.pack errorMsg
 
-instance (IOE :> es, DB :> es) => HyperView Message es where
+instance (IOE :> es, DB :> es, ConfigEnv :> es) => HyperView Message es where
   data Action Message = Louder Text
     deriving (Show, Read, ViewAction)
 
   update (Louder msg) = do
-    -- Log when the action is executed
-    liftIO $ logInfo $ "Making text louder: " ++ show msg
+    -- Get welcome message from config
+    welcome <- welcomeMessage
+    
+    -- Log when the action is executed with welcome message
+    liftIO $ logInfo $ "Making text louder: " ++ show msg ++ " (from " ++ Text.unpack welcome ++ ")"
 
     -- Get database pool from Reader effect
-    pool <- ask -- @Pool.Pool
+    pool <- ask @Pool.Pool
 
     -- Store message in database using pool
     let logMsg = "Stored in DB: " <> msg

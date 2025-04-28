@@ -1,10 +1,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE TypeOperators #-}
 
 module DbPool 
   ( initPool
+  , initPoolWithConfig
   , withPool
+  , withConfiguredPool
   , DB
   , setupDbSession
   , storeMessageSession
@@ -17,7 +21,7 @@ import Data.ByteString (ByteString)
 import Data.Int (Int32)
 import qualified Data.Vector as Vector
 import Data.Time.Clock (secondsToDiffTime)
-import Effectful()
+import Effectful
 import Effectful.Reader.Static
 import qualified Hasql.Pool as Pool
 import qualified Hasql.Pool.Config as Config
@@ -31,49 +35,36 @@ import Hasql.Encoders()
 import Hasql.TH (resultlessStatement, vectorStatement)
 import Logger (logInfo)
 import Control.Exception (bracket)
+import Config
+  ( ConfigEnv
+  , withPoolConfig
+  )
 
 -- Effect for database access using a connection pool
 type DB = Reader Pool.Pool
 
--- Database connection settings
-connectionString :: ByteString
-connectionString = "host=localhost dbname=hyperbole user=hyperbole password=hyperbole"
-
--- Pool configuration
-poolSize :: Int
-poolSize = 10
-
-acquisitionTimeout :: Int
-acquisitionTimeout = 10  -- seconds
-
-maxLifetime :: Int
-maxLifetime = 600  -- seconds (10 minutes)
-
-maxIdletime :: Int
-maxIdletime = 600  -- seconds (10 minutes)
-
--- Initialize the connection pool settings
-initPoolSettings :: Config.Config
-initPoolSettings = Config.settings
-  [ Config.size poolSize
-  , Config.acquisitionTimeout (secondsToDiffTime $ fromIntegral acquisitionTimeout)
-  , Config.agingTimeout (secondsToDiffTime $ fromIntegral maxLifetime)
-  , Config.idlenessTimeout (secondsToDiffTime $ fromIntegral maxIdletime)
+-- Initialize the connection pool settings with explicit parameters
+initPoolSettings :: ByteString -> Int -> Int -> Int -> Int -> Config.Config
+initPoolSettings connStr size acqTimeout lifetime idletime = Config.settings
+  [ Config.size size
+  , Config.acquisitionTimeout (secondsToDiffTime $ fromIntegral acqTimeout)
+  , Config.agingTimeout (secondsToDiffTime $ fromIntegral lifetime)
+  , Config.idlenessTimeout (secondsToDiffTime $ fromIntegral idletime)
   , Config.staticConnectionSettings
       [ Connection.Setting.connection
-          (Connection.Setting.Connection.string (TE.decodeUtf8 connectionString))
+          (Connection.Setting.Connection.string (TE.decodeUtf8 connStr))
       ]
   ]
 
--- Initialize the connection pool and return it
-initPool :: IO Pool.Pool
-initPool = do
-  logInfo $ "Creating database connection pool (size: " ++ show poolSize ++ 
-           ", acquisition timeout: " ++ show acquisitionTimeout ++ "s" ++
-           ", max lifetime: " ++ show maxLifetime ++ "s" ++
-           ", max idle time: " ++ show maxIdletime ++ "s)"
+-- Initialize the connection pool using config parameters
+initPoolWithConfig :: ByteString -> Int -> Int -> Int -> Int -> IO Pool.Pool
+initPoolWithConfig connStr size acqTimeout lifetime idletime = do
+  logInfo $ "Creating database connection pool (size: " ++ show size ++ 
+           ", acquisition timeout: " ++ show acqTimeout ++ "s" ++
+           ", max lifetime: " ++ show lifetime ++ "s" ++
+           ", max idle time: " ++ show idletime ++ "s)"
            
-  pool <- Pool.acquire initPoolSettings
+  pool <- Pool.acquire (initPoolSettings connStr size acqTimeout lifetime idletime)
   logInfo "Connection pool created successfully"
   
   -- Setup database table if needed
@@ -86,6 +77,17 @@ initPool = do
   
   pure pool
 
+-- Initialize pool with legacy hard-coded values (for backward compatibility)
+initPool :: IO Pool.Pool
+initPool = do
+  let connectionString = "host=localhost dbname=hyperbole user=hyperbole password=hyperbole"
+  let poolSize = 10
+  let acquisitionTimeout = 10  -- seconds
+  let maxLifetime = 600  -- seconds (10 minutes)
+  let maxIdletime = 600  -- seconds (10 minutes)
+  
+  initPoolWithConfig connectionString poolSize acquisitionTimeout maxLifetime maxIdletime
+
 -- Run a function with a database connection pool, ensuring resources are cleaned up
 withPool :: (Pool.Pool -> IO a) -> IO a
 withPool = bracket 
@@ -94,6 +96,18 @@ withPool = bracket
     logInfo "Shutting down connection pool"
     Pool.release pool
     logInfo "Connection pool shutdown complete")
+
+-- Run a function with a database connection pool created from config
+withConfiguredPool :: (ConfigEnv :> es, IOE :> es) => (Pool.Pool -> Eff es a) -> Eff es a
+withConfiguredPool action = do
+  withPoolConfig $ \connStr size acqTimeout lifetime idletime -> do
+    pool <- liftIO $ initPoolWithConfig connStr size acqTimeout lifetime idletime
+    result <- action pool
+    liftIO $ do
+      logInfo "Shutting down connection pool"
+      Pool.release pool
+      logInfo "Connection pool shutdown complete"
+    pure result
 
 -- Setup database tables
 setupDbSession :: Session.Session ()
