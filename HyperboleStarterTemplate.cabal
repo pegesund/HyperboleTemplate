@@ -11,7 +11,7 @@ cabal-version:      3.0
 --   http://haskell.org/cabal/users-guide/
 --
 -- The name of the package.
-name:               myapp
+name:               HyperboleStarterTemplate
 
 -- The package version.
 -- See the Haskell package versioning policy (PVP) for standards
@@ -23,10 +23,12 @@ name:               myapp
 version:            0.1.0.0
 
 -- A short (one-line) description of the package.
--- synopsis:
+synopsis:            A starter template for Hyperbole web applications
 
 -- A longer description of the package.
--- description:
+description:         This template provides a foundation for building web applications with
+                     the Hyperbole web framework. It includes configuration management,
+                     connection pooling for PostgreSQL, and structured logging with hslogger.
 
 -- The license under which the package is released.
 license:            BSD-3-Clause
@@ -53,7 +55,7 @@ extra-doc-files:    CHANGELOG.md
 common warnings
     ghc-options: -Wall
 
-executable myapp
+executable HyperboleStarterTemplate
     -- Import common warning flags.
     import:           warnings
 
