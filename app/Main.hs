@@ -11,47 +11,83 @@
 module Main where
 
 import Data.Text (Text)
+import qualified Data.Text.Encoding as TE
+import Data.ByteString (ByteString)
 import Effectful
 import Effectful.Reader.Static
-import Hasql.Connection (Connection)
-import qualified Hasql.Connection as Connection
+import qualified Hasql.Pool as Pool
+import qualified Hasql.Pool.Config as Config
+import Hasql.Connection()
+import qualified Hasql.Connection.Setting as Connection.Setting
+import qualified Hasql.Connection.Setting.Connection as Connection.Setting.Connection
 import qualified Hasql.Decoders as HD
 import qualified Hasql.Encoders as HE
 import qualified Hasql.Session as Session
 import qualified Hasql.Statement as HS
 import Logger (logInfo)
 import Web.Hyperbole
+import Control.Exception (bracket)
 
--- Effect for database access, review, Petter3
-type DB = Reader Connection
+-- Effect for database access using a connection pool
+type DB = Reader Pool.Pool
 
 main :: IO ()
 main = do
   -- Log application startup
   logInfo "Starting Hyperbole application on port 3000"
 
-  -- Connect to PostgreSQL database
-  -- Empty list for default settings (localhost)
-  connResult <- Connection.acquire []
-
-  case connResult of
-    Left err -> do
-      logInfo $ "Database connection error: " ++ show err
-      error "Failed to connect to the database"
-    Right conn -> do
-      logInfo "Successfully connected to PostgreSQL database"
-
+  -- Database connection settings
+  let connectionString = "host=localhost dbname=hyperbole user=hyperbole password=hyperbole" :: ByteString
+      poolSize = 10
+      acquisitionTimeout = 10  -- seconds
+      maxLifetime = 600       -- seconds
+      maxIdletime = 600       -- seconds
+      poolSettings = Config.settings
+        [ Config.size poolSize
+        , Config.acquisitionTimeout acquisitionTimeout
+        , Config.agingTimeout maxLifetime
+        , Config.idlenessTimeout maxIdletime
+        , Config.staticConnectionSettings
+            [ Connection.Setting.connection
+                (Connection.Setting.Connection.string (TE.decodeUtf8 connectionString))
+            ]
+        ]
+  
+  -- Create and use a connection pool with proper resource management
+  bracket
+    -- Acquire the pool
+    (do
+      logInfo $ "Creating database connection pool (size: " ++ show poolSize ++ 
+               ", acquisition timeout: " ++ show acquisitionTimeout ++ "s" ++
+               ", max lifetime: " ++ show maxLifetime ++ "s" ++
+               ", max idle time: " ++ show maxIdletime ++ "s)"
+      pool <- Pool.acquire poolSettings
+      logInfo "Connection pool created successfully"
+      
       -- Setup database table if needed
-      setupDbResult <- Session.run setupDbSession conn
+      setupDbResult <- Pool.use pool setupDbSession
       case setupDbResult of
-        Left err -> logInfo $ "Database setup error: " ++ show err
+        Left err -> do
+          logInfo $ "Database setup error: " ++ show err
+          logInfo "Continuing without database setup"
         Right _ -> logInfo "Database ready"
-
-      -- Run application with database connection
+      
+      pure pool)
+    
+    -- Release the pool when done
+    (\pool -> do
+      logInfo "Shutting down connection pool"
+      Pool.release pool
+      logInfo "Connection pool shutdown complete")
+    
+    -- Use the pool
+    (\pool -> do
+      -- Run application with database connection pool
+      logInfo "Starting application server on port 3000"
       run 3000 $ do
         liveApp
-          (basicDocument "Example")
-          (runReader conn $ runPage mypage)
+          (basicDocument "Example with Connection Pool")
+          (runReader pool $ runPage mypage))
 
 -- Setup database tables
 setupDbSession :: Session.Session ()
@@ -89,12 +125,12 @@ instance (IOE :> es, DB :> es) => HyperView Message es where
     -- Log when the action is executed
     liftIO $ logInfo $ "Making text louder: " ++ show msg
 
-    -- Get database connection from Reader effect
-    conn <- ask -- @Connection
+    -- Get database pool from Reader effect
+    pool <- ask -- @Pool.Pool
 
-    -- Store message in database
+    -- Store message in database using pool
     let logMsg = "Stored in DB: " <> msg
-    dbResult <- liftIO $ Session.run (storeMessageSession logMsg) conn
+    dbResult <- liftIO $ Pool.use pool (storeMessageSession logMsg)
 
     -- Log database result
     case dbResult of

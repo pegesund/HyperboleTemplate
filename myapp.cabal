@@ -76,6 +76,7 @@ executable myapp
                       , wai
                       , time
                       , hasql == 1.9.1.2
+                      , hasql-pool
                       , bytestring
 
     -- Directories containing source files.
