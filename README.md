@@ -10,4 +10,12 @@ It includes setup for:
 
 It replicates the basic starter project in the hyperbole readme, but with these features implemented (effectful)[https://hackage.haskell.org/package/effectful]
 
+run with
+
+cabal run
+
+Create a database hyperbole, user hyperbole with password hyperbole. Give this user all rights on db.
+
+
 Here you go, up and running with all you need.. Now there is no excuse for not starting to code!
+
