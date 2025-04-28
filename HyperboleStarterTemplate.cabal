@@ -58,6 +58,9 @@ common warnings
 executable HyperboleStarterTemplate
     -- Import common warning flags.
     import:           warnings
+    
+    -- Enable multi-threaded runtime
+    ghc-options:      -threaded -rtsopts -with-rtsopts=-N
 
     -- .hs or .lhs file containing the Main module.
     main-is:          Main.hs
