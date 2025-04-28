@@ -19,8 +19,8 @@ import Effectful
 import Effectful.Reader.Static
 import qualified Hasql.Pool as Pool
 import Hasql.Session ()
+import Logger (LogEnv, logDebug, logError, logInfo, textToPriority, withLoggerLevel)
 import qualified System.Log.Logger as Log
-import Logger (LogEnv, logInfo, logError, logDebug, withLoggerLevel, textToPriority)
 import Web.Hyperbole
 
 -- Import our database pool module
@@ -50,13 +50,13 @@ main = do
         defaultConfig
           { configAppName = "Hyperbole Demo App"
           , configWelcomeMessage = "Welcome to our amazing app!"
-          , configLogLevel = "DEBUG"  -- Set log level to DEBUG for development
+          , configLogLevel = "DEBUG" -- Set log level to DEBUG for development
           }
 
   -- Setup the logger with proper resource management, using log level from config
   withLoggerLevel "HyperboleApp" (textToPriority (configLogLevel config)) $ \logger -> do
     Log.infoM "Main" "Logger initialized"
-    
+
     -- Use the configuration with proper resource management
     withConfig config $ \appConfig -> do
       -- Run the effectful application code with both config and logger in readers
@@ -206,8 +206,7 @@ instance (IOE :> es, DB :> es, LogEnv :> es) => HyperView RecentMessages es wher
         pure $ recentMessagesView msgs
 
 messageView :: Text -> View Message ()
-messageView msg = do
-  row id $ do
-    -- Log when button is clicked
-    button (Louder msg) id "Louder"
-    el_ $ text msg
+messageView m = do
+  row (gap 10) $ do
+    button (Louder m) (border 1 . pad 5) "Louder"
+    el (pad 5) $ text m
