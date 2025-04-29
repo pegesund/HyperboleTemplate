@@ -108,6 +108,7 @@ buildConnectionString config = BS.pack $
   " password=" ++ T.unpack (configDbPassword config)
 
 -- Execute an action with pool config derived from AppConfig
+-- Note: We don't use AppEffects here since DbPool imports this module
 withPoolConfig :: (ConfigEnv :> es, IOE :> es) => 
                  (ByteString -> Int -> Int -> Int -> Int -> Eff es a) -> 
                  Eff es a

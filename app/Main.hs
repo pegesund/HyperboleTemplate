@@ -10,7 +10,7 @@
 {-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Main where
+module Main (main) where
 
 import Data.Int (Int32)
 import Data.Text (Text)
@@ -19,13 +19,12 @@ import Effectful
 import Effectful.Reader.Static
 import qualified Hasql.Pool as Pool
 import Hasql.Session ()
-import Logger (LogEnv, logDebug, logError, logInfo, textToPriority, withLoggerLevel)
+import Logger (logDebug, logError, logInfo, textToPriority, withLoggerLevel)
 import qualified System.Log.Logger as Log
 import Web.Hyperbole
 
 -- Import our database pool module
 import DbPool (
-  DB,
   getRecentMessagesSession,
   storeMessageSession,
   withConfiguredPool,
@@ -34,11 +33,13 @@ import DbPool (
 -- Import our configuration module
 import Config (
   AppConfig (..),
-  ConfigEnv,
   defaultConfig,
   welcomeMessage,
   withConfig,
  )
+
+-- Import AppEffects
+import AppEffects (AppEffects)
 
 main :: IO ()
 main = do
@@ -81,7 +82,7 @@ main = do
               (runReader logger $ runReader appConf $ runReader pool $ runPage mypage)
 
 -- Page with database access
-mypage :: (Hyperbole :> es, DB :> es, ConfigEnv :> es, LogEnv :> es, IOE :> es) => Eff es (Page '[Message, RecentMessages])
+mypage :: (Hyperbole :> es, AppEffects es) => Eff es (Page '[Message, RecentMessages])
 mypage = do
   -- Get configuration from Reader effect
   welcome <- welcomeMessage
@@ -147,7 +148,7 @@ messagesErrorView errorMsg = do
   row id $ do
     el_ $ text $ Text.pack errorMsg
 
-instance (IOE :> es, DB :> es, ConfigEnv :> es, LogEnv :> es) => HyperView Message es where
+instance (AppEffects es) => HyperView Message es where
   data Action Message = Louder Text
     deriving (Show, Read, ViewAction)
 
@@ -179,7 +180,7 @@ instance (IOE :> es, DB :> es, ConfigEnv :> es, LogEnv :> es) => HyperView Messa
     pure $ messageView new
 
 -- HyperView instance for RecentMessages
-instance (IOE :> es, DB :> es, LogEnv :> es) => HyperView RecentMessages es where
+instance (AppEffects es) => HyperView RecentMessages es where
   data Action RecentMessages = RefreshMessages
     deriving (Show, Read, ViewAction)
 

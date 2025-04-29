@@ -1,29 +1,31 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeOperators #-}
-{-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE DataKinds #-}
 
-module Logger 
-  ( -- * Logger Effect
-    LogEnv
-  , initLogger
-  , withLogger
-  , withLoggerLevel
-  , initLoggerFromConfig
-  , textToPriority
-    -- * Logging functions
-  , logDebug
-  , logInfo
-  , logWarning
-  , logError
-  , logCritical
+module Logger (
+  -- * Logger Effect
+  LogEnv,
+  initLogger,
+  withLogger,
+  withLoggerLevel,
+  initLoggerFromConfig,
+  textToPriority,
+
+  -- * Logging functions
+  logDebug,
+  logInfo,
+  logWarning,
+  logError,
+  logCritical,
+
   -- * Re-exported types
-  , Priority(..)
-  ) where
+  Priority (..),
+) where
 
-import System.Log.Logger (Priority(..), setLevel, updateGlobalLogger)
+import System.IO (hPutStrLn, stderr)
+import System.Log.Logger (Priority (..), setLevel, updateGlobalLogger)
 import qualified System.Log.Logger as Log
-import System.IO (stderr, hPutStrLn)
 
 import Control.Exception (bracket)
 import Data.Text (Text)
@@ -40,38 +42,42 @@ type LogEnv = Reader String
 -- | Convert text log level to Priority
 textToPriority :: Text -> Priority
 textToPriority level = case T.toUpper level of
-  "DEBUG"    -> DEBUG
-  "INFO"     -> INFO
-  "NOTICE"   -> NOTICE
-  "WARNING"  -> WARNING
-  "ERROR"    -> ERROR
+  "DEBUG" -> DEBUG
+  "INFO" -> INFO
+  "NOTICE" -> NOTICE
+  "WARNING" -> WARNING
+  "ERROR" -> ERROR
   "CRITICAL" -> CRITICAL
-  "ALERT"    -> ALERT
+  "ALERT" -> ALERT
   "EMERGENCY" -> EMERGENCY
-  _          -> INFO  -- Default to INFO if level is unknown
+  _ -> INFO -- Default to INFO if level is unknown
 
 -- | Initialize the logger and return the logger object
 initLogger :: String -> Priority -> IO String
 initLogger appName logPriority = do
   -- Set up the logger with the given app name and log level
   updateGlobalLogger appName (setLevel logPriority)
-  
+
   -- Return the app logger name for use in the effect system
   return appName
 
 -- | Run an action with a configured logger and default log level (INFO)
 withLogger :: String -> (String -> IO a) -> IO a
-withLogger appName = bracket 
-  (initLogger appName INFO)
-  (\_ -> do
-    hPutStrLn stderr "Shutting down logger")
+withLogger appName =
+  bracket
+    (initLogger appName INFO)
+    ( \_ -> do
+        hPutStrLn stderr "Shutting down logger"
+    )
 
 -- | Run an action with a configured logger and specified log level
 withLoggerLevel :: String -> Priority -> (String -> IO a) -> IO a
-withLoggerLevel appName logPriority = bracket 
-  (initLogger appName logPriority)
-  (\_ -> do
-    hPutStrLn stderr "Shutting down logger")
+withLoggerLevel appName logPriority =
+  bracket
+    (initLogger appName logPriority)
+    ( \_ -> do
+        hPutStrLn stderr "Shutting down logger"
+    )
 
 -- | Initialize logger with level from config (for use within effectful code)
 initLoggerFromConfig :: (ConfigEnv :> es, IOE :> es) => String -> Eff es String
@@ -79,7 +85,7 @@ initLoggerFromConfig appName = do
   -- Get log level from config
   logLevelText <- getLogLevel
   let logPriority = textToPriority logLevelText
-  
+
   -- Initialize logger with the log level from config
   liftIO $ initLogger appName logPriority
 
