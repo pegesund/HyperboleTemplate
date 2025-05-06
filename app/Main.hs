@@ -73,7 +73,7 @@ main = do
               pageWithEffects
 
 -- Page with database access
-mypage :: (Hyperbole :> es, DB :> es, Logger :> es, Config :> es, IOE :> es) => Eff es (Page '[Message, RecentMessages])
+mypage :: (Hyperbole :> es, AppEffects es) => Eff es (Page '[Message, RecentMessages])
 mypage = do
   -- Get configuration from Reader effect
   welcome <- welcomeMessage
@@ -136,7 +136,7 @@ messagesErrorView errorMsg = do
   row id $ do
     el_ $ text $ Text.pack errorMsg
 
-instance (DB :> es, Logger :> es, Config :> es, IOE :> es) => HyperView Message es where
+instance (AppEffects es) => HyperView Message es where
   data Action Message = Louder Text
     deriving (Show, Read, ViewAction)
 
@@ -165,7 +165,7 @@ instance (DB :> es, Logger :> es, Config :> es, IOE :> es) => HyperView Message 
     pure $ messageView new
 
 -- HyperView instance for RecentMessages
-instance (DB :> es, Logger :> es, Config :> es, IOE :> es) => HyperView RecentMessages es where
+instance (AppEffects es) => HyperView RecentMessages es where
   data Action RecentMessages = RefreshMessages
     deriving (Show, Read, ViewAction)
 

@@ -17,4 +17,5 @@ import AppEffects.Logger (Logger, logDebug, logError, logInfo, withLoggerLevel, 
 import AppEffects.DB
 
 -- Common type alias for our application effects
+-- Note: When using this type, DB needs to be in scope (import AppEffects.DB)
 type AppEffects es = (IOE :> es, DB :> es, Config :> es, Logger :> es)
