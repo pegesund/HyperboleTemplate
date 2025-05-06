@@ -8,20 +8,18 @@ module DbActions (
   -- * Pool initialization
   initPool,
   initPoolWithConfig,
-  
+
   -- * Resource management
-  withPool,
   withConfiguredPool,
-  
+
   -- * Database sessions
   setupDbSession,
   storeMessageSession,
   getRecentMessagesSession,
 ) where
 
-import AppEffects.Config (Config, getDbHost, getDbName, getDbUser, getDbPassword, getPoolSize)
+import AppEffects.Config (Config, getDbHost, getDbName, getDbPassword, getDbUser, getPoolSize)
 import AppEffects.Logger (Logger, logDebug, logInfo)
-import Control.Exception (bracket)
 import Data.ByteString (ByteString)
 import Data.Int (Int32)
 import Data.Text (Text)
@@ -94,35 +92,24 @@ initPool = do
   let maxIdletime = 600 -- seconds (10 minutes)
   initPoolWithConfig connectionString poolSize acquisitionTimeout maxLifetime maxIdletime
 
--- Run a function with a database connection pool, ensuring resources are cleaned up
-withPool :: (Pool.Pool -> IO a) -> IO a
-withPool =
-  bracket
-    initPool
-    ( \pool -> do
-        Log.infoM "DbActions" "Shutting down connection pool"
-        Pool.release pool
-        Log.infoM "DbActions" "Connection pool shutdown complete"
-    )
-
 -- Run a function with a database connection pool created from config
 withConfiguredPool :: (Config :> es, Logger :> es, IOE :> es) => (Pool.Pool -> Eff es a) -> Eff es a
 withConfiguredPool action = do
   logDebug "Setting up connection pool from config"
-  
+
   -- Get configuration values from the Config effect
   dbHost <- getDbHost
   dbName <- getDbName
   dbUser <- getDbUser
   dbPassword <- getDbPassword
   poolSize <- getPoolSize
-  
+
   -- Construct the connection string
   let connStr = TE.encodeUtf8 $ "host=" <> dbHost <> " dbname=" <> dbName <> " user=" <> dbUser <> " password=" <> dbPassword
   let acqTimeout = 10
   let lifetime = 600
   let idletime = 600
-  
+
   pool <- liftIO $ initPoolWithConfig connStr poolSize acqTimeout lifetime idletime
   logInfo "Connection pool created, executing action"
   result <- action pool
