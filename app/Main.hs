@@ -15,31 +15,19 @@ module Main (main) where
 import Data.Int (Int32)
 import Data.Text (Text)
 import qualified Data.Text as Text
+import Control.Monad (forM_)
 import Effectful
 import Effectful.Reader.Static
-import qualified Hasql.Pool as Pool
-import Hasql.Session ()
-import Logger (logDebug, logError, logInfo, textToPriority, withLoggerLevel)
 import qualified System.Log.Logger as Log
 import Web.Hyperbole
 
--- Import our database pool module
-import DbPool (
-  getRecentMessagesSession,
-  storeMessageSession,
-  withConfiguredPool,
- )
+-- Import effects and runners from AppEffects
+import AppEffects
+import AppEffects.Config (runConfig)
+import AppEffects.Logger (runLogger)
 
--- Import our configuration module
-import Config (
-  AppConfig (..),
-  defaultConfig,
-  welcomeMessage,
-  withConfig,
- )
-
--- Import AppEffects
-import AppEffects (AppEffects)
+-- Import application-specific database functionality
+import DbActions (withConfiguredPool, getRecentMessagesSession, storeMessageSession)
 
 main :: IO ()
 main = do
@@ -60,39 +48,39 @@ main = do
 
     -- Use the configuration with proper resource management
     withConfig config $ \appConfig -> do
-      -- Run the effectful application code with both config and logger in readers
-      runEff $ runReader logger $ runReader appConfig $ do
-        -- Get welcome message from config
-        welcome <- welcomeMessage
-        logInfo $ "Welcome message: " ++ Text.unpack welcome
-        logDebug "Initializing application components"
-
-        -- Create and use a connection pool with proper resource management using config
-        withConfiguredPool $ \pool -> do
+      -- Create and use a connection pool with proper resource management using config
+      runEff $ 
+        -- Run with the Config effect
+        runConfig appConfig $
+          -- Run with the Logger effect  
+          runLogger logger $
+            -- Run inside the withConfiguredPool function which manages the database pool
+            withConfiguredPool $ \pool -> do
+          -- Get welcome message from config
+          welcome <- welcomeMessage
+          logInfo $ "Welcome message: " ++ Text.unpack welcome
+          logDebug "Initializing application components"
+          
           -- Run application with database connection pool
           logInfo "Starting application server on port 3000"
 
-          -- Get the app config for passing to the page
-          appConf <- ask
-
-          -- Run the web server with all three readers (config, pool, and logger)
+          -- Run the web server with all effects prepared for the page
           liftIO $ run 3000 $ do
+            -- This is how Hyperbole expects the effects to be set up
+            let pageWithEffects = runConfig appConfig $ runLogger logger $ runReader pool $ runPage mypage
             liveApp
-              (basicDocument $ configAppName appConf)
-              (runReader logger $ runReader appConf $ runReader pool $ runPage mypage)
+              (basicDocument $ configAppName appConfig)
+              pageWithEffects
 
 -- Page with database access
-mypage :: (Hyperbole :> es, AppEffects es) => Eff es (Page '[Message, RecentMessages])
+mypage :: (Hyperbole :> es, DB :> es, Logger :> es, Config :> es, IOE :> es) => Eff es (Page '[Message, RecentMessages])
 mypage = do
   -- Get configuration from Reader effect
   welcome <- welcomeMessage
 
-  -- Get database pool from Reader effect
-  pool <- ask @Pool.Pool
-
-  -- Get recent messages from database
+  -- Get recent messages from database using our DB effect
   logDebug "Retrieving recent messages from database"
-  messagesResult <- liftIO $ Pool.use pool getRecentMessagesSession
+  messagesResult <- runSession getRecentMessagesSession
 
   -- Format messages or display error
   let messagesView = case messagesResult of
@@ -125,7 +113,8 @@ recentMessagesView messages = do
     button RefreshMessages id "Refresh"
 
   -- Display each message
-  mapM_
+  forM_
+    messages
     ( \(msgId, content, timestamp) -> do
         row id $ do
           col id $ do
@@ -137,7 +126,6 @@ recentMessagesView messages = do
                   <> content
             el_ $ text $ "Time: " <> timestamp
     )
-    messages
 
 -- View for when there's an error loading messages
 messagesErrorView :: String -> View RecentMessages ()
@@ -148,7 +136,7 @@ messagesErrorView errorMsg = do
   row id $ do
     el_ $ text $ Text.pack errorMsg
 
-instance (AppEffects es) => HyperView Message es where
+instance (DB :> es, Logger :> es, Config :> es, IOE :> es) => HyperView Message es where
   data Action Message = Louder Text
     deriving (Show, Read, ViewAction)
 
@@ -159,13 +147,10 @@ instance (AppEffects es) => HyperView Message es where
     -- Log when the action is executed with welcome message
     logInfo $ "Making text louder: " ++ show msg ++ " (from " ++ Text.unpack welcome ++ ")"
 
-    -- Get database pool from Reader effect
-    pool <- ask @Pool.Pool
-
-    -- Store message in database using pool
+    -- Store message in database using our DB effect
     let logMsg = "Stored in DB: " <> msg
     logDebug $ "Storing message in database: " ++ Text.unpack logMsg
-    dbResult <- liftIO $ Pool.use pool (storeMessageSession logMsg)
+    dbResult <- runSession (storeMessageSession logMsg)
 
     -- Log database result
     case dbResult of
@@ -180,7 +165,7 @@ instance (AppEffects es) => HyperView Message es where
     pure $ messageView new
 
 -- HyperView instance for RecentMessages
-instance (AppEffects es) => HyperView RecentMessages es where
+instance (DB :> es, Logger :> es, Config :> es, IOE :> es) => HyperView RecentMessages es where
   data Action RecentMessages = RefreshMessages
     deriving (Show, Read, ViewAction)
 
@@ -188,12 +173,9 @@ instance (AppEffects es) => HyperView RecentMessages es where
     -- Log refresh action
     logInfo "Refreshing recent messages"
 
-    -- Get database pool from Reader effect
-    pool <- ask
-
-    -- Get recent messages from database
+    -- Get recent messages from database using our DB effect
     logDebug "Fetching messages from database"
-    messagesResult <- liftIO $ Pool.use pool getRecentMessagesSession
+    messagesResult <- runSession getRecentMessagesSession
 
     -- Log result and return updated view
     case messagesResult of

@@ -4,21 +4,23 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TypeOperators #-}
 
-module DbPool (
+module DbActions (
+  -- * Pool initialization
   initPool,
   initPoolWithConfig,
+  
+  -- * Resource management
   withPool,
   withConfiguredPool,
-  DB,
+  
+  -- * Database sessions
   setupDbSession,
   storeMessageSession,
   getRecentMessagesSession,
 ) where
 
-import Config (
-  ConfigEnv,
-  withPoolConfig,
- )
+import AppEffects.Config (Config, getDbHost, getDbName, getDbUser, getDbPassword, getPoolSize)
+import AppEffects.Logger (Logger, logDebug, logInfo)
 import Control.Exception (bracket)
 import Data.ByteString (ByteString)
 import Data.Int (Int32)
@@ -37,11 +39,7 @@ import qualified Hasql.Pool.Config as Config
 import qualified Hasql.Session as Session
 import qualified Hasql.Statement as HS
 import Hasql.TH (resultlessStatement, vectorStatement)
-import Logger (LogEnv, logDebug, logInfo)
 import qualified System.Log.Logger as Log
-
--- Effect for database access using a connection pool is defined in AppEffects
-import AppEffects (DB)
 
 -- Initialize the connection pool settings with explicit parameters
 initPoolSettings :: ByteString -> Int -> Int -> Int -> Int -> Config.Config
@@ -60,7 +58,7 @@ initPoolSettings connStr size acqTimeout lifetime idletime =
 -- Initialize the connection pool using config parameters
 initPoolWithConfig :: ByteString -> Int -> Int -> Int -> Int -> IO Pool.Pool
 initPoolWithConfig connStr size acqTimeout lifetime idletime = do
-  Log.infoM "DbPool" $
+  Log.infoM "DbActions" $
     "Creating database connection pool (size: "
       ++ show size
       ++ ", acquisition timeout: "
@@ -74,15 +72,15 @@ initPoolWithConfig connStr size acqTimeout lifetime idletime = do
       ++ "s)"
 
   pool <- Pool.acquire (initPoolSettings connStr size acqTimeout lifetime idletime)
-  Log.infoM "DbPool" "Connection pool created successfully"
+  Log.infoM "DbActions" "Connection pool created successfully"
 
   -- Setup database table if needed
   setupDbResult <- Pool.use pool setupDbSession
   case setupDbResult of
     Left err -> do
-      Log.errorM "DbPool" $ "Database setup error: " ++ show err
-      Log.warningM "DbPool" "Continuing without database setup"
-    Right _ -> Log.infoM "DbPool" "Database ready"
+      Log.errorM "DbActions" $ "Database setup error: " ++ show err
+      Log.warningM "DbActions" "Continuing without database setup"
+    Right _ -> Log.infoM "DbActions" "Database ready"
 
   pure pool
 
@@ -102,24 +100,37 @@ withPool =
   bracket
     initPool
     ( \pool -> do
-        Log.infoM "DbPool" "Shutting down connection pool"
+        Log.infoM "DbActions" "Shutting down connection pool"
         Pool.release pool
-        Log.infoM "DbPool" "Connection pool shutdown complete"
+        Log.infoM "DbActions" "Connection pool shutdown complete"
     )
 
 -- Run a function with a database connection pool created from config
-withConfiguredPool :: (ConfigEnv :> es, LogEnv :> es, IOE :> es) => (Pool.Pool -> Eff es a) -> Eff es a
+withConfiguredPool :: (Config :> es, Logger :> es, IOE :> es) => (Pool.Pool -> Eff es a) -> Eff es a
 withConfiguredPool action = do
   logDebug "Setting up connection pool from config"
-  withPoolConfig $ \connStr size acqTimeout lifetime idletime -> do
-    pool <- liftIO $ initPoolWithConfig connStr size acqTimeout lifetime idletime
-    logInfo "Connection pool created, executing action"
-    result <- action pool
-    liftIO $ do
-      Log.infoM "DbPool" "Shutting down connection pool"
-      Pool.release pool
-      Log.infoM "DbPool" "Connection pool shutdown complete"
-    pure result
+  
+  -- Get configuration values from the Config effect
+  dbHost <- getDbHost
+  dbName <- getDbName
+  dbUser <- getDbUser
+  dbPassword <- getDbPassword
+  poolSize <- getPoolSize
+  
+  -- Construct the connection string
+  let connStr = TE.encodeUtf8 $ "host=" <> dbHost <> " dbname=" <> dbName <> " user=" <> dbUser <> " password=" <> dbPassword
+  let acqTimeout = 10
+  let lifetime = 600
+  let idletime = 600
+  
+  pool <- liftIO $ initPoolWithConfig connStr poolSize acqTimeout lifetime idletime
+  logInfo "Connection pool created, executing action"
+  result <- action pool
+  liftIO $ do
+    Log.infoM "DbActions" "Shutting down connection pool"
+    Pool.release pool
+    Log.infoM "DbActions" "Connection pool shutdown complete"
+  pure result
 
 -- Setup database tables
 setupDbSession :: Session.Session ()

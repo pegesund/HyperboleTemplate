@@ -3,20 +3,18 @@
 {-# LANGUAGE ConstraintKinds #-}
 
 module AppEffects 
-  ( AppEffects
-  , DB
+  ( -- * Application effects
+    AppEffects
+  -- * Re-export effects
+  , module AppEffects.DB
+  , module AppEffects.Config
+  , module AppEffects.Logger
   ) where
 
 import Effectful
-import Effectful.Reader.Static
-import Config (ConfigEnv)
-import Logger (LogEnv)
-
--- Import DB type but without creating a circular dependency
-import qualified Hasql.Pool as Pool
-
--- For our DB effect (copied from DbPool to avoid circular deps)
-type DB = Reader Pool.Pool
+import AppEffects.Config (Config, AppConfig(..), defaultConfig, withConfig, welcomeMessage)
+import AppEffects.Logger (Logger, logDebug, logError, logInfo, withLoggerLevel, textToPriority)
+import AppEffects.DB
 
 -- Common type alias for our application effects
-type AppEffects es = (IOE :> es, DB :> es, ConfigEnv :> es, LogEnv :> es)
+type AppEffects es = (IOE :> es, DB :> es, Config :> es, Logger :> es)
