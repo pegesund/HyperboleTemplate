@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
@@ -15,10 +16,13 @@ module Main (main) where
 import Data.Int (Int32)
 import Data.Text (Text)
 import qualified Data.Text as Text
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as TE
 import Control.Monad (forM_)
 import Effectful
 import Effectful.Reader.Static
 import qualified System.Log.Logger as Log
+import qualified Hasql.Pool as Pool
 import Web.Hyperbole
 
 -- Import effects and runners from AppEffects
@@ -27,7 +31,7 @@ import AppEffects.Config (runConfig)
 import AppEffects.Logger (runLogger)
 
 -- Import application-specific database functionality
-import DbActions (withConfiguredPool, getRecentMessagesSession, storeMessageSession)
+import DbActions (getRecentMessagesSession, storeMessageSession, initPoolWithConfig)
 
 main :: IO ()
 main = do
@@ -48,29 +52,50 @@ main = do
 
     -- Use the configuration with proper resource management
     withConfig config $ \appConfig -> do
-      -- Create and use a connection pool with proper resource management using config
-      runEff $ 
-        -- Run with the Config effect
-        runConfig appConfig $
-          -- Run with the Logger effect  
-          runLogger logger $
-            -- Run inside the withConfiguredPool function which manages the database pool
-            withConfiguredPool $ \pool -> do
-          -- Get welcome message from config
-          welcome <- welcomeMessage
-          logInfo $ "Welcome message: " ++ Text.unpack welcome
-          logDebug "Initializing application components"
+      -- We'll set up database connection directly, without using the effect system
+      Log.infoM "Main" "Initializing database connection pool"
+      
+      -- Create a connection pool directly using the configuration
+      let connStr = "host=" <> T.unpack (configDbHost appConfig) <> 
+                    " dbname=" <> T.unpack (configDbName appConfig) <> 
+                    " user=" <> T.unpack (configDbUser appConfig) <> 
+                    " password=" <> T.unpack (configDbPassword appConfig)
+      
+      -- Log configuration details for debugging
+      Log.debugM "Main" $ "Database connection: host=" ++ T.unpack (configDbHost appConfig) 
+                          ++ " dbname=" ++ T.unpack (configDbName appConfig)
+                          ++ " user=" ++ T.unpack (configDbUser appConfig)
+                          ++ " (password hidden)"
+      Log.debugM "Main" $ "Pool configuration: size=" ++ show (configPoolSize appConfig)
+                         ++ ", timeout=10s, lifetime=600s, idletime=600s"
+      
+      -- Initialize the pool directly
+      pool <- initPoolWithConfig 
+                (TE.encodeUtf8 $ T.pack connStr) 
+                (configPoolSize appConfig) 
+                10 -- acquisition timeout
+                600 -- lifetime 
+                600 -- idle time
+      
+      -- Log welcome message directly from config
+      Log.infoM "Main" $ "Welcome message: " ++ T.unpack (configWelcomeMessage appConfig)
+      Log.debugM "Main" "Initializing application components"
+      Log.infoM "Main" "Starting application server on port 3000"
+      
+      -- Start the web server directly
+      run 3000 $ do
+          -- Set up the Hyperbole effect stack just for the page rendering
+          -- This is the only place we actually need effects
+          let pageWithEffects = runConfig appConfig $ runLogger logger $ runReader pool $ runPage mypage
           
-          -- Run application with database connection pool
-          logInfo "Starting application server on port 3000"
-
-          -- Run the web server with all effects prepared for the page
-          liftIO $ run 3000 $ do
-            -- This is how Hyperbole expects the effects to be set up
-            let pageWithEffects = runConfig appConfig $ runLogger logger $ runReader pool $ runPage mypage
-            liveApp
+          -- Create the Hyperbole web application
+          liveApp
               (basicDocument $ configAppName appConfig)
               pageWithEffects
+              
+      -- Clean up resources
+      Log.infoM "Main" "Shutting down database pool"
+      Pool.release pool
 
 -- Page with database access
 mypage :: (Hyperbole :> es, AppEffects es) => Eff es (Page '[Message, RecentMessages])
